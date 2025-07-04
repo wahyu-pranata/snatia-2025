@@ -96,22 +96,11 @@ jobs:
       run: |
         #!/bin/bash
 
-        # FTP Configuration (using bash variables directly)
         FTP_HOST="${{ secrets.FTP_HOST }}"
         FTP_USER="${{ secrets.FTP_USERNAME }}"
         FTP_PASS="${{ secrets.FTP_PASSWORD }}"
         FTP_PORT="${{ secrets.FTP_PORT }}"
         REMOTE_DIR="${{ secrets.FTP_SERVER_DIR }}"
-
-        # Set default port if not provided
-        if [ -z "$FTP_PORT" ]; then
-            FTP_PORT="21"
-        fi
-
-        # Set default remote directory if not provided
-        if [ -z "$REMOTE_DIR" ]; then
-            REMOTE_DIR="/"
-        fi
 
         echo "Starting FTP deployment..."
         echo "Host: $FTP_HOST"
@@ -119,19 +108,20 @@ jobs:
         echo "Port: $FTP_PORT"
         echo "Remote Directory: $REMOTE_DIR"
 
-        # Create lftp script - IMPORTANT: Use double quotes for HEREDOC to allow variable interpolation
         cat > ftp_commands.txt << EOF_LFTP
         set ftp:ssl-allow no
         set ftp:ssl-force no
         set ssl:verify-certificate no
         set ftp:passive-mode on
-        open -p $FTP_PORT -u $FTP_USER,$FTP_PASS $FTP_HOST
-        cd $REMOTE_DIR
 
-        # Upload all files
+        set ftp:user \$FTP_USER
+        set ftp:pass \$FTP_PASS
+
+        open -p \$FTP_PORT \$FTP_HOST # Now we just provide host and port, credentials are set
+        cd \$REMOTE_DIR
+
         mirror --reverse --delete --verbose --exclude-glob .env --exclude-glob storage/logs/*.log ./ ./
 
-        # Set proper permissions
         chmod 755 public
         chmod -R 755 storage
         chmod -R 755 bootstrap/cache
@@ -139,23 +129,15 @@ jobs:
         quit
         EOF_LFTP
 
-        # --- Debugging (Optional, remove after fixing) ---
-        echo "--- Contents of ftp_commands.txt ---"
-        cat ftp_commands.txt
-        echo "------------------------------------"
-        # ------------------------------------
-
-        # Execute FTP commands
         lftp -f ftp_commands.txt
 
         if [ $? -eq 0 ]; then
-            echo "✅ FTP deployment successful!"
+            echo "FTP deployment successful!"
         else
-            echo "❌ FTP deployment failed!"
+            echo "FTP deployment failed!"
             exit 1
         fi
 
-        # Clean up
         rm -f ftp_commands.txt
 
     - name: Deploy via FTP
