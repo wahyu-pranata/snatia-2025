@@ -140,7 +140,7 @@ jobs:
               chmod -R 755 storage
               chmod -R 755 bootstrap/cache
               # Add other Laravel post-deployment commands here
-        EOF_SSH
+          EOF_SSH
           else
               echo "❌ SSH deployment failed!"
               exit 1
