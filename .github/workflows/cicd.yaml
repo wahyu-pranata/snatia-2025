@@ -95,7 +95,6 @@ jobs:
     - name: Create FTP deployment script
       run: |
         #!/bin/bash
-
         FTP_HOST="${{ secrets.FTP_HOST }}"
         FTP_USER="${{ secrets.FTP_USERNAME }}"
         FTP_PASS="${{ secrets.FTP_PASSWORD }}"
@@ -114,11 +113,8 @@ jobs:
         set ssl:verify-certificate no
         set ftp:passive-mode on
 
-        set ftp:user \$FTP_USER
-        set ftp:pass \$FTP_PASS
-
-        open -p \$FTP_PORT \$FTP_HOST # Now we just provide host and port, credentials are set
-        cd \$REMOTE_DIR
+        open -u $FTP_USER,$FTP_PASS -p $FTP_PORT $FTP_HOST
+        cd $REMOTE_DIR
 
         mirror --reverse --delete --verbose --exclude-glob .env --exclude-glob storage/logs/*.log ./ ./
 
@@ -130,15 +126,12 @@ jobs:
         EOF_LFTP
 
         lftp -f ftp_commands.txt
-
         if [ $? -eq 0 ]; then
             echo "FTP deployment successful!"
         else
             echo "FTP deployment failed!"
             exit 1
         fi
-
         rm -f ftp_commands.txt
-
     - name: Deploy via FTP
       run: ./deploy.sh
