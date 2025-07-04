@@ -100,7 +100,7 @@ jobs:
           echo "Port: $SSH_PORT"
           echo "Remote Directory: $REMOTE_DIR"
 
-          sudo apt-get update && sudo apt-get install -y sshpass
+          sudo apt-get update && sudo apt-get install -y sshpass rsync
 
           mkdir -p ~/.ssh
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
@@ -109,9 +109,6 @@ jobs:
               exit 1 # Exit early if ssh-keyscan fails
           fi
 
-          # Deploy using rsync with sshpass
-          # Redirect all output (stdout and stderr) to a log file
-          # and also print it to the console (tee)
           echo "Attempting rsync..."
           sshpass -p "$SSH_PASS" rsync -avz --delete \
             --exclude='.env' \
