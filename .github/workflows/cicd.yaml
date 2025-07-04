@@ -85,43 +85,59 @@ jobs:
 
     - name: Deploy via SSH with password
       run: |
-        #!/bin/bash
-        SSH_HOST="${{ secrets.SSH_HOST }}"
-        SSH_USER="${{ secrets.SSH_USERNAME }}"
-        SSH_PASS="${{ secrets.SSH_PASSWORD }}"
-        SSH_PORT="${{ secrets.SSH_PORT }}"
-        REMOTE_DIR="${{ secrets.REMOTE_DIR }}"
+          #!/bin/bash
+          set -x # This will print each command as it's executed, very useful for debugging
 
-        echo "Starting SSH deployment with password..."
-        echo "Host: $SSH_HOST"
-        echo "User: $SSH_USER"
-        echo "Port: $SSH_PORT"
-        echo "Remote Directory: $REMOTE_DIR"
+          SSH_HOST="${{ secrets.SSH_HOST }}"
+          SSH_USER="${{ secrets.SSH_USERNAME }}"
+          SSH_PASS="${{ secrets.SSH_PASSWORD }}"
+          SSH_PORT="${{ secrets.SSH_PORT }}"
+          REMOTE_DIR="${{ secrets.REMOTE_DIR }}"
 
-        sudo apt-get update && sudo apt-get install -y sshpass
+          echo "Starting SSH deployment with password..."
+          echo "Host: $SSH_HOST"
+          echo "User: $SSH_USER"
+          echo "Port: $SSH_PORT"
+          echo "Remote Directory: $REMOTE_DIR"
 
-        mkdir -p ~/.ssh
+          sudo apt-get update && sudo apt-get install -y sshpass
 
-        ssh-keyscan -p $SSH_PORT $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          if [ $? -ne 0 ]; then
+              echo "Error: ssh-keyscan failed. Check SSH_HOST and SSH_PORT."
+              exit 1 # Exit early if ssh-keyscan fails
+          fi
 
-        sshpass -p "$SSH_PASS" rsync -avz --delete \
-          --exclude='.env' \
-          --exclude='storage/logs/*.log' \
-          -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
-          ./ $SSH_USER@$SSH_HOST:$REMOTE_DIR
+          # Deploy using rsync with sshpass
+          # Redirect all output (stdout and stderr) to a log file
+          # and also print it to the console (tee)
+          echo "Attempting rsync..."
+          sshpass -p "$SSH_PASS" rsync -avz --delete \
+            --exclude='.env' \
+            --exclude='storage/logs/*.log' \
+            -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
+            ./ "$SSH_USER@$SSH_HOST:$REMOTE_DIR" 2>&1 | tee rsync_output.log
+          RSYNC_EXIT_CODE=${PIPESTATUS[0]} # Capture the actual rsync exit code
 
-        if [ $? -eq 0 ]; then
-            echo "SSH deployment successful!"
+          echo "Rsync output:"
+          cat rsync_output.log # Print the captured output for inspection
+          echo "Rsync exited with code: $RSYNC_EXIT_CODE"
 
-            sshpass -p "$SSH_PASS" ssh -p $SSH_PORT -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST << EOF
-            cd $REMOTE_DIR
-            chmod 755 public
-            chmod -R 755 storage
-            chmod -R 755 bootstrap/cache
-        EOF
-        else
-            echo "SSH deployment failed!"
-            exit 1
-        fi
-    - name: Deploy via FTP
-      run: ./deploy.sh
+          if [ $RSYNC_EXIT_CODE -eq 0 ]; then
+              echo "✅ SSH deployment successful!"
+
+              # Set permissions via SSH
+              # Add set -x inside the remote script for debugging remote commands
+              sshpass -p "$SSH_PASS" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" << 'EOF_SSH'
+              set -x # Debugging remote commands
+              cd "$REMOTE_DIR"
+              chmod 755 public
+              chmod -R 755 storage
+              chmod -R 755 bootstrap/cache
+              # You will likely want to add php artisan migrate, cache clear, etc. here
+          EOF_SSH
+          else
+              echo "❌ SSH deployment failed!"
+              exit 1
+          fi
