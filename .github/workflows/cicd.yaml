@@ -83,10 +83,10 @@ jobs:
         rm -f ftp_commands.txt
 
 
-    - name: Deploy via SSH with password
+    - name: Deploy via SSH
       run: |
           #!/bin/bash
-          set -x # This will print each command as it's executed, very useful for debugging
+          set -x # Keep this for debugging
 
           SSH_HOST="${{ secrets.SSH_HOST }}"
           SSH_USER="${{ secrets.SSH_USERNAME }}"
@@ -94,46 +94,53 @@ jobs:
           SSH_PORT="${{ secrets.SSH_PORT }}"
           REMOTE_DIR="${{ secrets.REMOTE_DIR }}"
 
+          # Add a default port if SSH_PORT secret is empty or unset
+          if [ -z "$SSH_PORT" ]; then
+              SSH_PORT="22"
+              echo "Warning: SSH_PORT secret is empty or unset, defaulting to port 22."
+          fi
+
           echo "Starting SSH deployment with password..."
           echo "Host: $SSH_HOST"
           echo "User: $SSH_USER"
           echo "Port: $SSH_PORT"
           echo "Remote Directory: $REMOTE_DIR"
 
-          sudo apt-get update && sudo apt-get install -y sshpass rsync
+          sudo apt-get update && sudo apt-get install -y sshpass rsync # Install both here
 
           mkdir -p ~/.ssh
+
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           if [ $? -ne 0 ]; then
-              echo "Error: ssh-keyscan failed. Check SSH_HOST and SSH_PORT."
-              exit 1 # Exit early if ssh-keyscan fails
+              echo "Error: ssh-keyscan failed. Check SSH_HOST, SSH_PORT, or firewall rules."
+              exit 1
           fi
 
+          # Deploy using rsync with sshpass - ***USE FULL PATH TO RSYNC***
           echo "Attempting rsync..."
-          sshpass -p "$SSH_PASS" rsync -avz --delete \
+          sshpass -p "$SSH_PASS" /usr/bin/rsync -avz --delete \
             --exclude='.env' \
             --exclude='storage/logs/*.log' \
             -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
             ./ "$SSH_USER@$SSH_HOST:$REMOTE_DIR" 2>&1 | tee rsync_output.log
-          RSYNC_EXIT_CODE=${PIPESTATUS[0]} # Capture the actual rsync exit code
+          RSYNC_EXIT_CODE=${PIPESTATUS[0]}
 
           echo "Rsync output:"
-          cat rsync_output.log # Print the captured output for inspection
+          cat rsync_output.log
           echo "Rsync exited with code: $RSYNC_EXIT_CODE"
 
           if [ $RSYNC_EXIT_CODE -eq 0 ]; then
               echo "✅ SSH deployment successful!"
 
               # Set permissions via SSH
-              # Add set -x inside the remote script for debugging remote commands
               sshpass -p "$SSH_PASS" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no "$SSH_USER@$SSH_HOST" << 'EOF_SSH'
-              set -x # Debugging remote commands
+              set -x
               cd "$REMOTE_DIR"
               chmod 755 public
               chmod -R 755 storage
               chmod -R 755 bootstrap/cache
-              # You will likely want to add php artisan migrate, cache clear, etc. here
-          EOF_SSH
+              # Add other Laravel post-deployment commands here
+        EOF_SSH
           else
               echo "❌ SSH deployment failed!"
               exit 1
