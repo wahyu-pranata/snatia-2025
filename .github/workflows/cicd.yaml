@@ -51,11 +51,6 @@ jobs:
     - name: Directory Permissions
       run: chmod -R 777 storage bootstrap/cache
 
-    - name: Create Database
-      run: |
-        mkdir -p database
-        touch database/database.sqlite
-
 
   deploy:
     needs: laravel-tests
@@ -99,10 +94,9 @@ jobs:
 
     - name: Create FTP deployment script
       run: |
-        cat > deploy.sh << 'EOF'
         #!/bin/bash
 
-        # FTP Configuration
+        # FTP Configuration (using bash variables directly)
         FTP_HOST="${{ secrets.FTP_HOST }}"
         FTP_USER="${{ secrets.FTP_USERNAME }}"
         FTP_PASS="${{ secrets.FTP_PASSWORD }}"
@@ -125,14 +119,14 @@ jobs:
         echo "Port: $FTP_PORT"
         echo "Remote Directory: $REMOTE_DIR"
 
-        # Create lftp script
-        cat > ftp_commands.txt << 'FTPEOF'
+        # Create lftp script - IMPORTANT: Use double quotes for HEREDOC to allow variable interpolation
+        cat > ftp_commands.txt << EOF_LFTP
         set ftp:ssl-allow no
         set ftp:ssl-force no
         set ssl:verify-certificate no
         set ftp:passive-mode on
-        open -p PORT -u USER,PASS HOST
-        cd REMOTE_DIR
+        open -p $FTP_PORT -u $FTP_USER,$FTP_PASS $FTP_HOST
+        cd $REMOTE_DIR
 
         # Upload all files
         mirror --reverse --delete --verbose --exclude-glob .env --exclude-glob storage/logs/*.log ./ ./
@@ -143,14 +137,13 @@ jobs:
         chmod -R 755 bootstrap/cache
 
         quit
-        FTPEOF
+        EOF_LFTP
 
-        # Replace placeholders in FTP script
-        sed -i "s/HOST/$FTP_HOST/g" ftp_commands.txt
-        sed -i "s/USER/$FTP_USER/g" ftp_commands.txt
-        sed -i "s/PASS/$FTP_PASS/g" ftp_commands.txt
-        sed -i "s/PORT/$FTP_PORT/g" ftp_commands.txt
-        sed -i "s|REMOTE_DIR|$REMOTE_DIR|g" ftp_commands.txt
+        # --- Debugging (Optional, remove after fixing) ---
+        echo "--- Contents of ftp_commands.txt ---"
+        cat ftp_commands.txt
+        echo "------------------------------------"
+        # ------------------------------------
 
         # Execute FTP commands
         lftp -f ftp_commands.txt
@@ -164,9 +157,6 @@ jobs:
 
         # Clean up
         rm -f ftp_commands.txt
-        EOF
-
-        chmod +x deploy.sh
 
     - name: Deploy via FTP
       run: ./deploy.sh
