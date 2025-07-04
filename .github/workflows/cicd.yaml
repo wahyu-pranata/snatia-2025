@@ -1,10 +1,10 @@
-name: Laravel CI/CD Pipeline on Staging
+name: Laravel CI/CD Pipeline with SSH
 
 on:
   push:
-    branches: [ staging ]
+    branches: [ master ]
   pull_request:
-    branches: [ staging ]
+    branches: [ master ]
 
 jobs:
   laravel-tests:
