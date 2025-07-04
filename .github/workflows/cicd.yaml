@@ -1,0 +1,127 @@
+name: Laravel CI/CD Pipeline on Staging
+
+on:
+  push:
+    branches: [ staging ]
+  pull_request:
+    branches: [ staging ]
+
+jobs:
+  laravel-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: laravel_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        extensions: mbstring, dom, fileinfo, mysql, gd, zip, bcmath, soap, intl, exif, iconv
+        coverage: none
+
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+           ${{ runner.os }}-php-
+
+    - name: Install dependencies
+      run: composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader
+
+    - name: Copy .env
+      run: php -r "file_exists('.env') || copy('.env.example', '.env');"
+
+    - name: Generate key
+      run: php artisan key:generate
+
+    - name: Directory Permissions (for tests)
+      run: chmod -R 777 storage bootstrap/cache
+
+  deploy:
+    needs: laravel-tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        extensions: mbstring, dom, fileinfo, mysql, gd, zip, bcmath, soap, intl, exif, iconv
+
+    - name: Install Composer dependencies (production)
+      run: composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+    - name: Prepare files for deployment
+      run: |
+        rm -rf node_modules
+        rm -rf tests
+        rm -f .env.example
+        rm -f .gitignore
+        rm -f README.md
+        rm -f phpunit.xml
+        rm -f webpack.mix.js
+        rm -f package*.json
+        rm -rf .github
+        rm -f deploy.sh
+        rm -f ftp_commands.txt
+
+
+    - name: Deploy via SSH with password
+      run: |
+        #!/bin/bash
+        SSH_HOST="${{ secrets.SSH_HOST }}"
+        SSH_USER="${{ secrets.SSH_USERNAME }}"
+        SSH_PASS="${{ secrets.SSH_PASSWORD }}"
+        SSH_PORT="${{ secrets.SSH_PORT }}"
+        REMOTE_DIR="${{ secrets.REMOTE_DIR }}"
+
+        echo "Starting SSH deployment with password..."
+        echo "Host: $SSH_HOST"
+        echo "User: $SSH_USER"
+        echo "Port: $SSH_PORT"
+        echo "Remote Directory: $REMOTE_DIR"
+
+        # Install sshpass if not available
+        sudo apt-get update && sudo apt-get install -y sshpass
+
+        # Add host to known_hosts to avoid interactive prompt
+        ssh-keyscan -p $SSH_PORT $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+        # Deploy using rsync with sshpass
+        sshpass -p "$SSH_PASS" rsync -avz --delete \
+          --exclude='.env' \
+          --exclude='storage/logs/*.log' \
+          -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
+          ./ $SSH_USER@$SSH_HOST:$REMOTE_DIR
+
+        if [ $? -eq 0 ]; then
+            echo "SSH deployment successful!"
+
+            # Set permissions via SSH
+            sshpass -p "$SSH_PASS" ssh -p $SSH_PORT -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST << EOF
+            cd $REMOTE_DIR
+            chmod 755 public
+            chmod -R 755 storage
+            chmod -R 755 bootstrap/cache
+        EOF
+        else
+            echo "SSH deployment failed!"
+            exit 1
+        fi
