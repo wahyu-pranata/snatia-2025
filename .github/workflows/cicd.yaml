@@ -1,4 +1,4 @@
-name: Laravel CI/CD Pipeline
+name: Laravel CI/CD Pipeline with SSH
 
 on:
   push:
@@ -51,7 +51,6 @@ jobs:
     - name: Directory Permissions
       run: chmod -R 777 storage bootstrap/cache
 
-
   deploy:
     needs: laravel-tests
     runs-on: ubuntu-latest
@@ -66,16 +65,11 @@ jobs:
         php-version: '8.2'
         extensions: mbstring, dom, fileinfo, mysql, gd, zip, bcmath, soap, intl, exif, iconv
 
-    - name: Install dependencies
+    - name: Install Composer dependencies (production)
       run: composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader --no-dev
-
-    - name: Install lftp for FTP operations
-      run: sudo apt-get update && sudo apt-get install -y lftp
 
     - name: Prepare files for deployment
       run: |
-        # Remove files that shouldn't be deployed
-        rm -rf .git
         rm -rf node_modules
         rm -rf tests
         rm -f .env.example
@@ -85,53 +79,51 @@ jobs:
         rm -f webpack.mix.js
         rm -f package*.json
         rm -rf .github
+        rm -f deploy.sh
+        rm -f ftp_commands.txt
 
-        # Clear any existing logs
-        rm -f storage/logs/*.log
 
-        # Create empty log file
-        touch storage/logs/laravel.log
-
-    - name: Create FTP deployment script
+    - name: Deploy via SSH with password
       run: |
         #!/bin/bash
-        FTP_HOST="${{ secrets.FTP_HOST }}"
-        FTP_USER="${{ secrets.FTP_USERNAME }}"
-        FTP_PASS="${{ secrets.FTP_PASSWORD }}"
-        FTP_PORT="${{ secrets.FTP_PORT }}"
-        REMOTE_DIR="${{ secrets.FTP_SERVER_DIR }}"
+        SSH_HOST="${{ secrets.SSH_HOST }}"
+        SSH_USER="${{ secrets.SSH_USERNAME }}"
+        SSH_PASS="${{ secrets.SSH_PASSWORD }}"
+        SSH_PORT="${{ secrets.SSH_PORT }}"
+        REMOTE_DIR="${{ secrets.REMOTE_DIR }}"
 
-        echo "Starting FTP deployment..."
-        echo "Host: $FTP_HOST"
-        echo "User: $FTP_USER"
-        echo "Port: $FTP_PORT"
+        echo "Starting SSH deployment with password..."
+        echo "Host: $SSH_HOST"
+        echo "User: $SSH_USER"
+        echo "Port: $SSH_PORT"
         echo "Remote Directory: $REMOTE_DIR"
 
-        cat > ftp_commands.txt << EOF_LFTP
-        set ftp:ssl-allow no
-        set ftp:ssl-force no
-        set ssl:verify-certificate no
-        set ftp:passive-mode on
+        # Install sshpass if not available
+        sudo apt-get update && sudo apt-get install -y sshpass
 
-        open -u $FTP_USER,$FTP_PASS -p $FTP_PORT $FTP_HOST
-        cd $REMOTE_DIR
+        # Add host to known_hosts to avoid interactive prompt
+        ssh-keyscan -p $SSH_PORT $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
 
-        mirror --reverse --delete --verbose --exclude-glob .env --exclude-glob storage/logs/*.log ./ ./
+        # Deploy using rsync with sshpass
+        sshpass -p "$SSH_PASS" rsync -avz --delete \
+          --exclude='.env' \
+          --exclude='storage/logs/*.log' \
+          -e "ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
+          ./ $SSH_USER@$SSH_HOST:$REMOTE_DIR
 
-        chmod 755 public
-        chmod -R 755 storage
-        chmod -R 755 bootstrap/cache
-
-        quit
-        EOF_LFTP
-
-        lftp -f ftp_commands.txt
         if [ $? -eq 0 ]; then
-            echo "FTP deployment successful!"
+            echo "SSH deployment successful!"
+
+            # Set permissions via SSH
+            sshpass -p "$SSH_PASS" ssh -p $SSH_PORT -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST << EOF
+            cd $REMOTE_DIR
+            chmod 755 public
+            chmod -R 755 storage
+            chmod -R 755 bootstrap/cache
+        EOF
         else
-            echo "FTP deployment failed!"
+            echo "SSH deployment failed!"
             exit 1
         fi
-        rm -f ftp_commands.txt
     - name: Deploy via FTP
       run: ./deploy.sh
